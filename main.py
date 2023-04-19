@@ -1,7 +1,7 @@
 
 from PyQt6 import QtGui, uic
-from PyQt6.QtWidgets import QWidget, QApplication, QTableWidgetItem, QLabel, QMessageBox
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtWidgets import QWidget, QApplication, QTableWidgetItem, QMessageBox
+from PyQt6.QtGui import QPixmap, QDesktopServices
 import cv2
 import sys
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QThread, QUrl
@@ -10,152 +10,10 @@ import time
 from pyzbar import pyzbar
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 import requests
-
-
-class FoundQR():
-    def __init__(self, data, img, qr):
-        self.data = data
-        self.img = img
-        self.qr_obj = qr
-        self.consecutiveNotSeen = 0
-
-    def __eq__(self, other):
-        return self.data == other.data
-
-def list_camera_ports():
-    """
-    Test the ports and returns a tuple with the available ports and the ones that are working.
-    """
-    non_working_ports = []
-    dev_port = 0
-    working_ports = []
-    available_ports = []
-    while len(non_working_ports) < 6: # if there are more than 5 non working ports stop the testing. 
-        camera = cv2.VideoCapture(dev_port)
-        if not camera.isOpened():
-            non_working_ports.append(dev_port)
-            print("Port %s is not working." %dev_port)
-        else:
-            is_reading, img = camera.read()
-            w = camera.get(3)
-            h = camera.get(4)
-            if is_reading:
-                working_ports.append(dev_port)
-            else:
-                available_ports.append(dev_port)
-        dev_port +=1
-    return available_ports,working_ports,non_working_ports
-
-# All CV Code will run in this thread to prevent GUI from freezing
-class CVThread(QThread):
-    live_signal = pyqtSignal(np.ndarray, str)
-    found_code_signal = pyqtSignal(list)
-
-    def __init__(self, source):
-        super().__init__()
-        self.source = source
-        self.shouldRun = True
-
-    def run(self):
-        # capture from web cam
-        cap = cv2.VideoCapture(self.source)
-
-        # if the camera is not opened, exit
-        if not cap.isOpened():
-            #show error message in qt window
-            msg = QMessageBox()
-            msg.setText("Unable to Open Camera")
-            msg.exec()
-
-    
-        while self.shouldRun:
-            ret, image = cap.read()
-            if ret:
-                # convert to grayscale
-                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-                # threshold the image to get a binary image (black and white only)
-                _, thresh = cv2.threshold(gray, 120, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-
-                # dilate to combine adjacent code contours
-                kernel = np.ones((5, 5), np.uint8)
-                thresh = cv2.dilate(thresh, kernel, iterations=1)
-                thresh = 255-thresh
-
-                # find the contours of the code's outline
-                contours, _ = cv2.findContours(thresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-
-                # find boundign boexes for the contours (indicating a possible qr code)
-                bboxes = []
-                for cnt in contours:
-                    area = cv2.contourArea(cnt)
-                    xmin, ymin, width, height = cv2.boundingRect(cnt)
-                    extent = area / (width * height)
-                    
-                    # filter non-rectangular objects and small objects
-                    if (area > 1000) and (abs(width-height) < 10):
-                        bboxes.append((xmin, ymin, xmin + width, ymin + height))
-                    
-                out = image.copy()
-                for xmin, ymin, xmax, ymax in bboxes:
-                    out = cv2.rectangle(out, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
-
-                self.live_signal.emit(out, "detection")
-                self.live_signal.emit(image, "live")
-
-                if len(bboxes) < 10:
-
-                    detected = []
-
-                    # crop the image to the bounding box
-                    for xmin, ymin, xmax, ymax in bboxes:
-                        cropped = image[ymin:ymax, xmin:xmax]
-                        # decode the qr codes
-                        barcodes = pyzbar.decode(cropped)
-
-                        for i in barcodes:
-                            # draw a box around the qr code that was found with i.rect
-                            detection = cv2.rectangle(image, (xmin+i.rect.left, ymin+i.rect.top), (xmin+i.rect.left+i.rect.width, ymin+i.rect.top+i.rect.height), (0, 0, 255), 2)
-                            qr = FoundQR(i.data.decode("utf-8"), detection, i)
-                            if qr not in detected:
-                                detected.append(qr)
-
-                    self.found_code_signal.emit(detected)
-
-
-        blankImage = np.zeros((1080, 1920, 3), np.uint8)
-        self.live_signal.emit(blankImage, "detection")
-        self.live_signal.emit(blankImage, "live")
-
-    def endCV(self):
-        self.shouldRun = False
-
-class DropperConnectionThread(QThread):
-    connectionStatusSignal = pyqtSignal(bool)
-    def __init__(self, url):
-        super().__init__()
-        self.url = url
-
-    def run(self):
-        while True:
-            try:
-                requests.get(self.url, timeout=1)
-                self.connectionStatusSignal.emit(True)
-            except:
-                self.connectionStatusSignal.emit(False)
-            time.sleep(1)
-
-class DropThread(QThread):
-    def __init__(self, url, pos):
-        super().__init__()
-        self.url = url
-        self.pos = pos
-
-    def run(self):
-        requests.get(self.url + "/?value=" + str(self.pos))
-        time.sleep(1)
-        requests.get(self.url + "/?value=90")
-
+import serial
+import serial.tools.list_ports
+from cvthread import CVThread
+from dropper import DropperConnectionThread
 
 
 class Ui(QWidget):
@@ -176,6 +34,8 @@ class Ui(QWidget):
 
         # connect the table selection changed signal to the on_qrTable_itemSelectionChanged slot
         self.qrTable.itemSelectionChanged.connect(self.on_qrTable_itemSelectionChanged)
+        #qr table double click
+        self.qrTable.doubleClicked.connect(self.on_qrTable_doubleClicked)
         self.tabWidget.currentChanged.connect(self.onTabChange)
 
         # browser
@@ -193,12 +53,9 @@ class Ui(QWidget):
 
         self.clearTableButton.clicked.connect(self.clearTable)
 
-        self.dropperConnectionThread = DropperConnectionThread("http://10.0.1.9")
-        self.dropperConnectionThread.connectionStatusSignal.connect(self.updateDropperConnectionStatus)
-        self.dropperConnectionThread.start()
-
         self.dropLeftButton.clicked.connect(self.dropLeft)
         self.dropRightButton.clicked.connect(self.dropRight)
+        self.dropCenterButton.clicked.connect(self.dropCenter)
 
         # generate 1920x1080 black openCV image
         blankImage = np.zeros((1080, 1920, 3), np.uint8)
@@ -206,6 +63,41 @@ class Ui(QWidget):
         self.update_image(blankImage, "live")
         self.update_image(blankImage, "detection")
 
+        # get live mouse position on the live image
+        self.liveView.mouseMoveEvent = self.qrDetectMouse
+        self.liveView.setMouseTracking(True)
+
+        #get updates from slider named "bbox_slider"
+        self.bbox_slider.valueChanged.connect(self.bbox_slider_changed)
+
+        # disable window resizing
+        self.setFixedSize(self.size())
+
+        self.openinbrowser.clicked.connect(self.open_in_browser)
+
+        self.refreshSerial.clicked.connect(self.update_serial_ports)
+        self.update_serial_ports()
+
+        self.connectSerial.clicked.connect(self.connect_disconnect_dropper)
+
+        self.dropper = None
+        self.dropperStatus.setText("Wireless: Disconnected")
+        #set red text
+        self.dropperStatus.setStyleSheet("QLabel { color : red; }")
+
+    def qrDetectMouse(self, event):
+        if hasattr(self, 'cv_thread') and type(self.cv_thread) == CVThread and self.cv_thread.isRunning():
+            self.cv_thread.update_mouse(event.pos().x(), event.pos().y())
+    
+    def bbox_slider_changed(self):
+        if hasattr(self, 'cv_thread') and type(self.cv_thread) == CVThread and self.cv_thread.isRunning():
+            self.cv_thread.update_bbox(self.bbox_slider.value())
+
+    def wheelEvent(self,event):
+        delta = event.angleDelta().y()
+        # increase slider value
+        self.bbox_slider.setValue(self.bbox_slider.value() + delta)
+        
     def startCVHandler(self):
 
         inText = self.cameraSource.text()
@@ -219,23 +111,22 @@ class Ui(QWidget):
             pass
 
         # check if there is already a thread running
-        if hasattr(self, 'thread') and type(self.thread) == CVThread and self.thread.isRunning():
+        if hasattr(self, 'cv_thread') and type(self.cv_thread) == CVThread and self.cv_thread.isRunning():
             self.startCV.setText("Start")
 
             # if there is, terminate it
-            self.thread.endCV()
+            self.cv_thread.endCV()
             # wait for the thread to finish
-            self.thread.wait()
+            self.cv_thread.wait()
 
         else:
-
             # create the video capture thread
-            self.thread = CVThread(inText)
+            self.cv_thread = CVThread(inText, self.liveView.width(), self.liveView.height())
             # connect its signal to the update_image slot
-            self.thread.live_signal.connect(self.update_image)
-            self.thread.found_code_signal.connect(self.update_detected)
+            self.cv_thread.live_signal.connect(self.update_image)
+            self.cv_thread.found_code_signal.connect(self.update_detected)
             # start the thread
-            self.thread.start()
+            self.cv_thread.start()
 
             self.startCV.setText("Stop")
 
@@ -247,12 +138,16 @@ class Ui(QWidget):
         self.browserHelp.show()
 
     def dropLeft(self):
-        self.dThreadLeft = DropThread("http://10.0.1.9", 0)
-        self.dThreadLeft.start()
+        if self.dropper != None:
+            self.dropper.left()
+    
+    def dropCenter(self):
+        if self.dropper != None:
+            self.dropper.center()
 
     def dropRight(self):
-        self.dThreadRight = DropThread("http://10.0.1.9", 180)
-        self.dThreadRight.start()
+        if self.dropper != None:
+            self.dropper.right()
 
     def loadProgressHandler(self, progress):
         self.browserProgressBar.setValue(progress)
@@ -265,14 +160,21 @@ class Ui(QWidget):
     def loadFinishedHandler(self):
         self.browserProgressBar.setValue(0)
 
-    @pyqtSlot(bool)
-    def updateDropperConnectionStatus(self, status):
-        if status:
-            self.dropperStatus.setText("Dropper Connection: Connected")
-            self.dropperStatus.setStyleSheet("color: green")
+    @pyqtSlot(bool, bool)
+    def updateDropperConnectionStatus(self, statusSerial, statusDropper):
+        if statusSerial:
+            self.connectSerial.setText("Disconnect")
         else:
-            self.dropperStatus.setText("Dropper Connection: Disconnected")
-            self.dropperStatus.setStyleSheet("color: red")
+            self.connectSerial.setText("Connect")
+
+        if statusDropper:
+            self.dropperStatus.setText("Wireless: Connected")
+            #set green text
+            self.dropperStatus.setStyleSheet("QLabel { color : green; }")
+        else:
+            self.dropperStatus.setText("Wireless: Disconnected")
+            #set red text
+            self.dropperStatus.setStyleSheet("QLabel { color : red; }")
 
     # slot for when tab changed
     def onTabChange(self):  
@@ -282,8 +184,7 @@ class Ui(QWidget):
             row = self.qrTable.selectedItems()[0].row()
             self.qrImage.setPixmap(self.convert_cv_qt(self.qrCodes[row].img, self.qrImage.width()))
 
-            
-
+    # slot for when table selection changed
     @pyqtSlot(np.ndarray, str)
     def update_image(self, cv_img, target):
         """Updates the image_label with a new opencv image"""
@@ -291,9 +192,6 @@ class Ui(QWidget):
 
         if target == "live":
             self.liveView.setPixmap(qt_img)
-
-        elif target == "detection":
-            self.thresholdedView.setPixmap(qt_img)
 
     def convert_cv_qt(self, cv_img, width):
         """Convert from an opencv image to QPixmap"""
@@ -344,6 +242,11 @@ class Ui(QWidget):
             else:
                 code.consecutiveNotSeen = 0
 
+    def open_in_browser(self):
+        if len(self.qrTable.selectedItems()) > 0:
+            row = self.qrTable.selectedItems()[0].row()
+            QDesktopServices.openUrl(QUrl(self.qrCodes[row].data))
+
     #when item is selected in qrTable
     def on_qrTable_itemSelectionChanged(self):
         if len(self.qrTable.selectedItems()) > 0:
@@ -353,10 +256,32 @@ class Ui(QWidget):
             self.browserHelp.hide()
             self.qrImage.setPixmap(self.convert_cv_qt(self.qrCodes[row].img, self.qrImage.width()))
 
+            self.openinbrowser.setEnabled(True)
 
+    def update_serial_ports(self):
+        self.serialPorts.clear()
 
+        # get list of serial ports
+        ports = serial.tools.list_ports.comports()
 
-    
+        # add each port to the list
+        for port in ports:
+            self.serialPorts.addItem(port.device)
+
+    def connect_disconnect_dropper(self):
+        if self.dropper is None:
+            self.dropper = DropperConnectionThread(self.serialPorts.currentText())
+            self.dropper.connectionStatusSignal.connect(self.updateDropperConnectionStatus)
+            self.dropper.start()
+        else:
+            self.dropper.disconnect()
+            self.dropper = None
+
+    def on_qrTable_doubleClicked(self):
+        # show alert with qr code data
+        if len(self.qrTable.selectedItems()) > 0:
+            row = self.qrTable.selectedItems()[0].row()
+            QMessageBox.information(self, "QR Code Data", self.qrCodes[row].data)
 
 
 if __name__=="__main__":
