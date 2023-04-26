@@ -25,16 +25,17 @@ class DropperConnectionThread(QThread):
 
                 try:
                     ser_in = self.ser.readline().decode("utf-8").strip()
-                    print(ser_in)
                     self.ser.flush()
-
-
 
                     if ser_in == "SEND 1":
                         wirelessStatus = False
+
                 except serial.SerialException:
                     serStatus = False
                     wirelessStatus = False
+                except Exception as e:
+                    print("There was a serial error!")
+                    print(e)
 
             self.connectionStatusSignal.emit(serStatus, wirelessStatus)
 

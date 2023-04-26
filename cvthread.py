@@ -28,8 +28,8 @@ class CVThread(QThread):
 
 
     def run(self):
-        # capture from web cam
-        cap = cv2.VideoCapture(self.source)
+        # capture from web cam, CAP_DSHOW removes delay on windows
+        cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW)
 
         # if the camera is not opened, exit
         if not cap.isOpened():
