@@ -71,7 +71,7 @@ class Ui(QWidget):
         self.bbox_slider.valueChanged.connect(self.bbox_slider_changed)
 
         # disable window resizing
-        self.setFixedSize(self.size())
+        self.setFixedSize(800,600)
 
         self.openinbrowser.clicked.connect(self.open_in_browser)
 
@@ -188,25 +188,28 @@ class Ui(QWidget):
     @pyqtSlot(np.ndarray, str)
     def update_image(self, cv_img, target):
         """Updates the image_label with a new opencv image"""
-        qt_img = self.convert_cv_qt(cv_img, self.liveView.height())
+        qt_img = self.convert_cv_qt(cv_img)
 
         if target == "live":
             self.liveView.setPixmap(qt_img)
 
-    def convert_cv_qt(self, cv_img, height):
+    def convert_cv_qt(self, cv_img):
         """Convert from an opencv image to QPixmap"""
         rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb_image.shape
         bytes_per_line = ch * w
         convert_to_Qt_format = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888)
 
-        #scale to fit width of liveView.width()
-        p = convert_to_Qt_format.scaledToHeight(height, Qt.TransformationMode.SmoothTransformation)
+        #scale to fit inside the liveView widget
+        p = convert_to_Qt_format.scaled(self.liveView.width(), self.liveView.height(), Qt.AspectRatioMode.KeepAspectRatio)
+
 
         # update liveView width
         self.liveView.setFixedWidth(p.width())
+
         if hasattr(self, 'cv_thread') and type(self.cv_thread) == CVThread and self.cv_thread.isRunning():
             self.cv_thread.window_size = (p.width(), p.height())
+
         return QPixmap.fromImage(p)
         
     def updateTable(self):
