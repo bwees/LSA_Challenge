@@ -45,6 +45,9 @@ class CVThread(QThread):
             if image is None:
                 continue
 
+            # resize to 16:9 aspect ratio
+            image = cv2.resize(image, (self.window_size[0], self.window_size[1]))
+
             # draw a box around the mouse of size bbox_size
             x, y = self.mouse_pos
 

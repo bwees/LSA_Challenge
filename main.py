@@ -23,7 +23,7 @@ class Ui(QWidget):
         self.show() # Show the GUI
         
 
-        self.setWindowTitle("LSA Challenge")
+        self.setWindowTitle("SEAL Challenge")
         self.disply_width = 1280
         self.display_height = 600
 
@@ -71,7 +71,7 @@ class Ui(QWidget):
         self.bbox_slider.valueChanged.connect(self.bbox_slider_changed)
 
         # disable window resizing
-        self.setFixedSize(800,600)
+        # self.setFixedSize(800,600)
 
         self.openinbrowser.clicked.connect(self.open_in_browser)
 
