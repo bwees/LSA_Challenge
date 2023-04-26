@@ -188,12 +188,12 @@ class Ui(QWidget):
     @pyqtSlot(np.ndarray, str)
     def update_image(self, cv_img, target):
         """Updates the image_label with a new opencv image"""
-        qt_img = self.convert_cv_qt(cv_img, self.liveView.width())
+        qt_img = self.convert_cv_qt(cv_img, self.liveView.height())
 
         if target == "live":
             self.liveView.setPixmap(qt_img)
 
-    def convert_cv_qt(self, cv_img, width):
+    def convert_cv_qt(self, cv_img, height):
         """Convert from an opencv image to QPixmap"""
         rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb_image.shape
@@ -201,7 +201,12 @@ class Ui(QWidget):
         convert_to_Qt_format = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888)
 
         #scale to fit width of liveView.width()
-        p = convert_to_Qt_format.scaledToWidth(width, Qt.TransformationMode.SmoothTransformation)
+        p = convert_to_Qt_format.scaledToHeight(height, Qt.TransformationMode.SmoothTransformation)
+
+        # update liveView width
+        self.liveView.setFixedWidth(p.width())
+        if hasattr(self, 'cv_thread') and type(self.cv_thread) == CVThread and self.cv_thread.isRunning():
+            self.cv_thread.window_size = (p.width(), p.height())
         return QPixmap.fromImage(p)
         
     def updateTable(self):
