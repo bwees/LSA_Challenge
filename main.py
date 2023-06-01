@@ -94,7 +94,7 @@ class Ui(QWidget):
             self.cv_thread.update_bbox(self.bbox_slider.value())
 
     def wheelEvent(self,event):
-        delta = event.angleDelta().y()
+        delta = int(event.angleDelta().y()*.25)
         # increase slider value
         self.bbox_slider.setValue(self.bbox_slider.value() + delta)
         
